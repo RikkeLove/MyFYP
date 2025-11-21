@@ -1,18 +1,82 @@
-#sampling_layer.py
+# sampling_layer.py
 
 import torch
 import torch.nn as nn
-from .tensor_mode_product import tensor_mode_product
-from .dct_utils import DCTMatrix
+from tensor_mode_product import tensor_mode_product
+from dct_utils import DCTMatrix
 
 class TensorSamplingLayer(nn.Module):
+
     def __init__(self, input_shape, output_shape=None, T=1, use_dct=False):
         """
-        初始化 TensorSamplingLayer。
-        :param input_shape: 输入张量的形状，例如 (H, W, B)。
-        :param output_shape: 输出张量的形状，例如 (m1, m2, m3)。
-        :param T: 张量项的数量，默认为 1。
-        :param use_dct: 是否使用 DCT 变换矩阵。
+        TensorSamplingLayer 实现 GTSNET 中的张量采样算子：
+        S ×1 Φ1 ×2 Φ2 ×3 Φ3 并对 T 个可分离项求和
+        """
+        super(TensorSamplingLayer, self).__init__()
+
+        self.input_shape = input_shape   # (H, W, C)
+        self.output_shape = output_shape
+        self.T = T
+        self.use_dct = use_dct
+
+        H, W, C = input_shape
+
+        # 如果未指定输出尺寸，默认压缩为 0.5 倍
+        if output_shape is None:
+            output_shape = (H // 2, W // 2, C)
+        self.output_shape = output_shape
+
+        m1, m2, m3 = output_shape
+
+        # ----------------------------
+        #  ①：为每个 t 创建独立的 Φ矩阵
+        # ----------------------------
+        self.Phi1_list = nn.ParameterList([nn.Parameter(torch.randn(m1, H)) for _ in range(T)])
+        self.Phi2_list = nn.ParameterList([nn.Parameter(torch.randn(m2, W)) for _ in range(T)])
+        self.Phi3_list = nn.ParameterList([nn.Parameter(torch.randn(m3, C)) for _ in range(T)])
+
+        # ----------------------------
+        #  ②：创建 DCT（仅根据 H、W、C）
+        # ----------------------------
+        if use_dct:
+            self.dct1 = DCTMatrix(H)
+            self.dct2 = DCTMatrix(W)
+            self.dct3 = DCTMatrix(C)
+
+    def forward(self, x):
+        """
+        x: [batch, H, W, C]
+        返回: [batch, m1, m2, m3]
         """
 
-        super(TensorSamplingLayer, self).__init__()
+        B, H, W, C = x.shape
+
+        # ----------------------------
+        #  ③：只在循环外执行一次 DCT
+        # ----------------------------
+        if self.use_dct:
+            x_dct = self.dct1.forward(x, 2)  # dim=2 → H 维
+            x_dct = self.dct2.forward(x_dct, 3)  # dim=3 → W 维
+            x_dct = self.dct3.forward(x_dct, 4)  # dim=4 → C 维
+        else:
+            x_dct = x
+
+        # 初始化输出
+        y = torch.zeros(B, *self.output_shape, device=x.device, dtype=x.dtype)
+
+        # ----------------------------
+        #  ④：对 T 个分支分别做 ×1, ×2, ×3
+        # ----------------------------
+        for t in range(self.T):
+            Phi1 = self.Phi1_list[t]
+            Phi2 = self.Phi2_list[t]
+            Phi3 = self.Phi3_list[t]
+
+            # 注意：dim=2,3,4 分别对应 H, W, C
+            y_t = tensor_mode_product(x_dct, Phi1, 2)
+            y_t = tensor_mode_product(y_t,  Phi2, 3)
+            y_t = tensor_mode_product(y_t,  Phi3, 4)
+
+            y += y_t
+
+        return y

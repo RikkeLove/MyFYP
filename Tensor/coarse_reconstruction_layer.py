@@ -1,7 +1,9 @@
+# coarse_reconstruction_layer.py
+
 import torch
 import torch.nn as nn
 from tensor_mode_product import tensor_mode_product
-from dct_utils import DCTMatrix
+from dct_utils import DCTMatrix # 确保导入 DCTMatrix
 
 class CoarseReconstructionLayer(nn.Module):
     """
@@ -9,7 +11,7 @@ class CoarseReconstructionLayer(nn.Module):
     它是采样操作 (P) 的伴随 (adjoint)，即 P'。
     接收测量值 Y，输出初始估计 S~。
     S~ = sum_{t=1}^T (Y ×1 (Phi1_t.T) ×2 (Phi2_t.T) ×3 (Phi3_t.T))
-    如果使用 DCT，则在应用转置矩阵前，先对 Y 应用逆 DCT。
+    如果使用 DCT，则先在 DCT 域进行累加，最后再应用逆 DCT 转换回空间域。
     """
 
     def __init__(self, sampling_layer, use_dct=False):
@@ -45,8 +47,8 @@ class CoarseReconstructionLayer(nn.Module):
         # 获取原始输入尺寸 (H, W, C) 用于初始化输出张量
         H, W, C = self.sampling_layer.input_shape
 
-        # 初始化输出
-        s_tilde = torch.zeros(B, H, W, C, device=y.device, dtype=y.dtype)
+        # 初始化 DCT 域的输出 (如果 use_dct 为 True) 或 空间域输出 (如果 use_dct 为 False)
+        s_tilde_dct_or_spatial = torch.zeros(B, H, W, C, device=y.device, dtype=y.dtype)
 
         # 对 T 个分支进行累加
         for t in range(self.sampling_layer.T):
@@ -65,15 +67,17 @@ class CoarseReconstructionLayer(nn.Module):
             s_t_branch = tensor_mode_product(s_t_branch, Phi2_t_transpose, 3)  # dim=3 -> m2 -> W, Shape: [B, H, W, m3]
             s_t_branch = tensor_mode_product(s_t_branch, Phi3_t_transpose, 4)  # dim=4 -> m3 -> C, Shape: [B, H, W, C]
 
-            # 将当前分支结果累加到总和中
-            s_tilde += s_t_branch
+            # 将当前分支结果累加到总和中 (此时仍在 DCT 域或空间域)
+            s_tilde_dct_or_spatial += s_t_branch
 
-        # (可选) 如果使用 DCT，对累加后的结果应用逆 DCT
-        # 这对应于将重建结果从 DCT 域转换回空间域
+        # (可选) 如果使用 DCT，对累加后的 DCT 域结果应用逆 DCT，转换回空间域
+        # 这是关键修改点：先累加，再逆变换
         if self.use_dct:
             # 注意：维度 dim=2, 3, 4 对应 H, W, C
-            s_tilde = self.dct1_inv.inverse(s_tilde, 2)  # Apply inverse DCT on H dimension
-            s_tilde = self.dct2_inv.inverse(s_tilde, 3)  # Apply inverse DCT on W dimension
-            s_tilde = self.dct3_inv.inverse(s_tilde, 4)  # Apply inverse DCT on C dimension
-
-        return s_tilde
+            s_tilde_spatial = self.dct1_inv.inverse(s_tilde_dct_or_spatial, 2)  # Apply inverse DCT on H dimension
+            s_tilde_spatial = self.dct2_inv.inverse(s_tilde_spatial, 3)  # Apply inverse DCT on W dimension
+            s_tilde_spatial = self.dct3_inv.inverse(s_tilde_spatial, 4)  # Apply inverse DCT on C dimension
+            return s_tilde_spatial
+        else:
+            # 如果不使用 DCT，则累加后的结果已经是空间域
+            return s_tilde_dct_or_spatial

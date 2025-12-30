@@ -73,9 +73,10 @@ class TensorSamplingLayer(nn.Module):
             Phi3 = self.Phi3_list[t]
 
             # 注意：dim=2,3,4 分别对应 H, W, C
-            y_t = tensor_mode_product(x_dct, Phi1, 2)
-            y_t = tensor_mode_product(y_t,  Phi2, 3)
-            y_t = tensor_mode_product(y_t,  Phi3, 4)
+            y_t = torch.einsum("bhwc,kh->bkwc", x_dct, Phi1)   # [B, m1, W, C]
+            y_t = torch.einsum("bkwc,lw->bklc", y_t, Phi2)     # [B, m1, m2, C]
+            y_t = torch.einsum("bklc,pc->bklp", y_t, Phi3)     # [B, m1, m2, m3]
+
 
             y += y_t
 

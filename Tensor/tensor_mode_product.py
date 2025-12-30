@@ -1,3 +1,4 @@
+# tensor_mode_product.py
 import torch
 
 def tensor_mode_product(X, A, n):

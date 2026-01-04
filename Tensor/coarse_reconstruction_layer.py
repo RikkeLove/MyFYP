@@ -2,7 +2,6 @@
 
 import torch
 import torch.nn as nn
-from tensor_mode_product import tensor_mode_product
 from dct_utils import DCTMatrix # 确保导入 DCTMatrix
 
 class CoarseReconstructionLayer(nn.Module):
@@ -63,9 +62,13 @@ class CoarseReconstructionLayer(nn.Module):
 
             # 开始对当前分支 y 进行模乘积 (使用转置矩阵)
             # y: [B, m1, m2, m3]
-            s_t_branch = tensor_mode_product(y, Phi1_t_transpose, 2)  # dim=2 -> m1 -> H, Shape: [B, H, m2, m3]
-            s_t_branch = tensor_mode_product(s_t_branch, Phi2_t_transpose, 3)  # dim=3 -> m2 -> W, Shape: [B, H, W, m3]
-            s_t_branch = tensor_mode_product(s_t_branch, Phi3_t_transpose, 4)  # dim=4 -> m3 -> C, Shape: [B, H, W, C]
+
+            # Phi1^T: [H, m1]
+            s_t_branch = torch.einsum("bklp,hk->bhlp", y, Phi1_t_transpose)  # -> [B, H, m2, m3]
+            # Phi2^T: [W, m2]
+            s_t_branch = torch.einsum("bhlp,wl->bhwp", s_t_branch, Phi2_t_transpose)  # -> [B, H, W, m3]
+            # Phi3^T: [C, m3]
+            s_t_branch = torch.einsum("bhwp,cp->bhwc", s_t_branch, Phi3_t_transpose)  # -> [B, H, W, C]
 
             # 将当前分支结果累加到总和中 (此时仍在 DCT 域或空间域)
             s_tilde_dct_or_spatial += s_t_branch

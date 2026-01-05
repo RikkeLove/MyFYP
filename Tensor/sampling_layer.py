@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 
-from Tensor.dct_utils import DCTMatrix
+from dct_utils import DCTMatrix
 
 class TensorSamplingLayer(nn.Module):
 

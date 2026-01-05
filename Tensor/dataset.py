@@ -145,6 +145,8 @@ class HSICubeDatasetBHWC(Dataset):
         self.cache_size = max(0, int(cache_size))
         self._cache: Dict[str, np.ndarray] = {}
         self._cache_order: List[str] = []
+        self.verbose_load = True  # 想关闭就改 False
+        self._loaded_once = set()  # 记录哪些 mat 已经打印过
 
         print("[HSICubeDatasetBHWC]")
         print("  CAVE  mats:", len(self.cave_files))
@@ -154,18 +156,26 @@ class HSICubeDatasetBHWC(Dataset):
         return self.length
 
     def _get_hsi(self, path: str) -> np.ndarray:
-        if self.cache_size <= 0:
-            return _load_hsi_mat(path)
-
-        if path in self._cache:
+        # 命中缓存直接返回（不打印）
+        if self.cache_size > 0 and path in self._cache:
             return self._cache[path]
 
+        # 真实读取 + 归一化
         hsi = _load_hsi_mat(path)
-        self._cache[path] = hsi
-        self._cache_order.append(path)
-        if len(self._cache_order) > self.cache_size:
-            old = self._cache_order.pop(0)
-            self._cache.pop(old, None)
+
+        # ✅ 每个 mat 第一次加载完成就打印一次
+        if self.verbose_load and path not in self._loaded_once:
+            print(f"[Load OK] {os.path.basename(path)}  shape={hsi.shape}")
+            self._loaded_once.add(path)
+
+        # 写入缓存
+        if self.cache_size > 0:
+            self._cache[path] = hsi
+            self._cache_order.append(path)
+            if len(self._cache_order) > self.cache_size:
+                old = self._cache_order.pop(0)
+                self._cache.pop(old, None)
+
         return hsi
 
     def __getitem__(self, idx: int):
